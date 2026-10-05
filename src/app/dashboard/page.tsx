@@ -84,7 +84,7 @@ export default function DashboardPage() {
     <div className="max-w-4xl mx-auto px-4 py-10">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold">Merchant dashboard</h1>
+          <h1 className="display text-2xl font-bold glow-text">Merchant dashboard</h1>
           <p className="text-sm text-[var(--text-muted)]">
             Non-custodial · payments go to your cashaddr
           </p>
@@ -212,3 +212,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+
