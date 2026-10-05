@@ -1,19 +1,22 @@
-import { uid } from '@/lib/utils/id';
 import type { Invoice, SettlementAsset } from '@/types';
 import { db } from '@/lib/db/store';
-import { createQuote, isQuoteExpired } from '@/services/quote/engine';
+import { createQuote } from '@/services/quote/engine';
 import { isSettlementEnabled } from '@/services/registry/assets';
+import { decodeCashaddr, normalizeCashaddr } from '@/lib/bch/cashaddr';
+import { findPayment } from '@/lib/bch/electrum';
 
-/**
- * Generate a unique BCH payment address for an invoice.
- * MVP: deterministic mock address derived from invoice id.
- * Production: derive from a watch-only HD path or use a real address generation service
- * that the merchant controls / monitors. Never hold the private key.
- */
-function generatePaymentAddress(invoiceId: string): string {
-  // Placeholder cashaddr-style string. Replace with real derivation.
-  const suffix = invoiceId.replace(/[^a-z0-9]/gi, '').slice(0, 32).padEnd(32, '0');
-  return `bitcoincash:q${suffix}`;
+/** Unique 1–999 sat tag so shared merchant addresses can attribute invoices. */
+function allocateSatoshiTag(merchantId: string, baseSats: number): number {
+  const existing = db.listInvoicesByMerchant(merchantId);
+  const used = new Set(
+    existing
+      .filter((i) => i.bchAmountSats != null && i.status === 'AWAITING_PAYMENT')
+      .map((i) => (i.bchAmountSats! % 1000 === 0 ? 0 : i.bchAmountSats! % 1000))
+  );
+  for (let tag = 1; tag < 1000; tag++) {
+    if (!used.has(tag)) return baseSats + tag;
+  }
+  return baseSats + (Date.now() % 999) + 1;
 }
 
 export interface CreateInvoiceInput {
@@ -30,16 +33,23 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<{
   const merchant = db.getMerchant(input.merchantId);
   if (!merchant) throw new Error('Merchant not found');
 
+  const dest = merchant.destinations?.BCH;
+  if (!dest) {
+    throw new Error(
+      'Merchant has no BCH destination. Register a cashaddr you control.'
+    );
+  }
+  const { address: paymentAddress } = decodeCashaddr(dest);
+
   let settlement: SettlementAsset =
     input.settlementAsset ||
-    (merchant.defaultSettlement === 'PER_INVOICE' ? 'BCH' : merchant.defaultSettlement);
+    (merchant.defaultSettlement === 'PER_INVOICE'
+      ? 'BCH'
+      : merchant.defaultSettlement);
 
   if (!isSettlementEnabled(settlement)) {
-    // Fall back to BCH if requested stable is disabled
     settlement = 'BCH';
   }
-
-  const paymentAddress = generatePaymentAddress(uid(8));
 
   const invoice = db.createInvoice({
     merchantId: input.merchantId,
@@ -53,17 +63,20 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<{
     expiresAt: null,
   });
 
-  // Immediately produce first quote
   const quote = await createQuote({
     invoiceId: invoice.id,
     usdAmount: input.usdAmount,
     settlementAsset: settlement,
   });
+
+  const taggedSats = allocateSatoshiTag(input.merchantId, quote.bchAmountSats);
+  quote.bchAmountSats = taggedSats;
+  quote.bchAmount = (taggedSats / 1e8).toFixed(8);
   db.saveQuote(quote);
 
   const updated = db.updateInvoice(invoice.id, {
     status: 'AWAITING_PAYMENT',
-    bchAmountSats: quote.bchAmountSats,
+    bchAmountSats: taggedSats,
     currentQuoteId: quote.id,
     quoteExpiresAt: quote.expiresAt,
   })!;
@@ -83,11 +96,14 @@ export async function refreshQuote(invoiceId: string) {
     usdAmount: invoice.usdAmount,
     settlementAsset: invoice.settlementAsset,
   });
+  const taggedSats = allocateSatoshiTag(invoice.merchantId, quote.bchAmountSats);
+  quote.bchAmountSats = taggedSats;
+  quote.bchAmount = (taggedSats / 1e8).toFixed(8);
   db.saveQuote(quote);
 
   return db.updateInvoice(invoiceId, {
     status: 'AWAITING_PAYMENT',
-    bchAmountSats: quote.bchAmountSats,
+    bchAmountSats: taggedSats,
     currentQuoteId: quote.id,
     quoteExpiresAt: quote.expiresAt,
   })!;
@@ -102,24 +118,62 @@ export function getInvoiceWithQuote(invoiceId: string) {
   return { invoice, quote };
 }
 
-export function markPaymentDetected(
+export function applyPaymentDetection(
   invoiceId: string,
   txId: string,
   amountSats: number
 ) {
   const invoice = db.getInvoice(invoiceId);
   if (!invoice) throw new Error('Invoice not found');
+  if (!invoice.bchAmountSats) throw new Error('Invoice has no quoted amount');
 
   let status: Invoice['status'] = 'PAYMENT_DETECTED';
-  if (invoice.bchAmountSats) {
-    if (amountSats < invoice.bchAmountSats * 0.99) status = 'UNDERPAID';
-    else if (amountSats > invoice.bchAmountSats * 1.05) status = 'OVERPAID';
-    else status = 'PAYMENT_VALIDATED';
+  if (amountSats === invoice.bchAmountSats) {
+    status =
+      invoice.settlementAsset === 'BCH' ? 'SETTLED' : 'SETTLEMENT_REQUIRED';
+  } else if (amountSats < invoice.bchAmountSats * 0.99) {
+    status = 'UNDERPAID';
+  } else if (amountSats > invoice.bchAmountSats * 1.05) {
+    status = 'OVERPAID';
+  } else {
+    status =
+      invoice.settlementAsset === 'BCH' ? 'SETTLED' : 'PAYMENT_VALIDATED';
   }
 
   return db.updateInvoice(invoiceId, {
     status,
     paymentTxId: txId,
     paymentDetectedAt: new Date().toISOString(),
+    settledAmount:
+      status === 'SETTLED' ? (amountSats / 1e8).toFixed(8) + ' BCH' : null,
   });
+}
+
+/** Poll Electrum for this invoice's payment (real chain only). */
+export async function checkPaymentOnChain(invoiceId: string) {
+  const invoice = db.getInvoice(invoiceId);
+  if (!invoice) throw new Error('Invoice not found');
+  if (!invoice.bchAmountSats) throw new Error('Invoice has no quoted amount');
+  if (['SETTLED', 'EXPIRED', 'REFUNDED'].includes(invoice.status)) {
+    return { invoice, found: false, alreadyFinal: true };
+  }
+
+  const utxo = await findPayment(
+    normalizeCashaddr(invoice.paymentAddress),
+    invoice.bchAmountSats
+  );
+  if (!utxo) {
+    return { invoice, found: false, alreadyFinal: false };
+  }
+
+  const updated = applyPaymentDetection(invoiceId, utxo.tx_hash, utxo.value);
+  return { invoice: updated, found: true, alreadyFinal: false, utxo };
+}
+
+export function markPaymentDetected(
+  invoiceId: string,
+  txId: string,
+  amountSats: number
+) {
+  return applyPaymentDetection(invoiceId, txId, amountSats);
 }
