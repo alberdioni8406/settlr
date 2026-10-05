@@ -59,7 +59,7 @@ export default function MerchantPage() {
           bchAddress: bchAddress.trim(),
           pusdAddress:
             settlement === 'PUSD'
-              ? (pusdAddress.trim() || bchAddress.trim())
+              ? pusdAddress.trim() || undefined
               : pusdAddress.trim() || undefined,
           defaultSettlement: settlement,
         }),
@@ -211,13 +211,13 @@ export default function MerchantPage() {
                   setFieldError(null);
                   setError(null);
                 }}
-                placeholder="bitcoincash:q..."
+                placeholder="bitcoincash:q... or z..."
                 spellCheck={false}
                 autoComplete="off"
               />
               <p className="hint">
-                Valid P2PKH cashaddr only. Customer BCH is sent here. Example
-                prefix: bitcoincash:q
+                P2PKH cashaddr (q…) or token-aware (z…). Customer BCH is sent
+                here.
               </p>
             </div>
 
@@ -236,15 +236,15 @@ export default function MerchantPage() {
                     setFieldError(null);
                     setError(null);
                   }}
-                  placeholder="bitcoincash:q... (token-capable wallet)"
+                  placeholder="bitcoincash:z..."
                   spellCheck={false}
                   autoComplete="off"
                 />
                 <p className="hint">
-                  Address where PUSD CashTokens should land after you sign the
-                  Cauldron swap. Use a wallet that supports CashTokens
-                  (Paytaca, Cashtokens-capable). Leave blank to reuse your BCH
-                  cashaddr if that wallet is token-aware.
+                  Must start with <span className="mono text-[var(--orange)]">z</span>
+                  (token-aware P2PKH). Example:
+                  bitcoincash:zz7pjvq99kylyvns6fjmyawjhxwnucgn2qwyae2ye9.
+                  Plain q… addresses cannot receive PUSD CashTokens.
                 </p>
               </div>
             )}
