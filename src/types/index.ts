@@ -9,6 +9,7 @@ export type InvoiceStatus =
   | 'PAYMENT_DETECTED'
   | 'PAYMENT_VALIDATED'
   | 'SETTLING'
+  | 'SETTLEMENT_REQUIRED'
   | 'SETTLED'
   | 'EXPIRED'
   | 'UNDERPAID'
