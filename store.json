@@ -1,0 +1,90 @@
+{
+  "merchants": {
+    "0Dfv1xBCXAfg": {
+      "id": "0Dfv1xBCXAfg",
+      "name": "Cafe2",
+      "defaultSettlement": "BCH",
+      "destinations": {
+        "BCH": "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+      },
+      "createdAt": "2026-10-05T15:35:02.886Z"
+    }
+  },
+  "invoices": {
+    "8q51qrAFXyclPSXa": {
+      "id": "8q51qrAFXyclPSXa",
+      "merchantId": "0Dfv1xBCXAfg",
+      "description": "Lunch",
+      "usdAmount": 12.5,
+      "settlementAsset": "BCH",
+      "status": "AWAITING_PAYMENT",
+      "paymentAddress": "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a",
+      "bchAmountSats": 3971451,
+      "currentQuoteId": "HdJkbHdx-cRfYPvR",
+      "quoteExpiresAt": "2026-10-05T15:36:13.741Z",
+      "paymentTxId": null,
+      "createdAt": "2026-10-05T15:35:14.355Z",
+      "updatedAt": "2026-10-05T15:35:14.355Z"
+    },
+    "jvPaHXgeCSEUFf1M": {
+      "id": "jvPaHXgeCSEUFf1M",
+      "merchantId": "0Dfv1xBCXAfg",
+      "description": "Tea",
+      "usdAmount": 10,
+      "settlementAsset": "PUSD",
+      "status": "AWAITING_PAYMENT",
+      "paymentAddress": "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a",
+      "bchAmountSats": 3177142,
+      "currentQuoteId": "oAtykx3NHM5zzqJy",
+      "quoteExpiresAt": "2026-10-05T15:36:15.065Z",
+      "paymentTxId": null,
+      "createdAt": "2026-10-05T15:35:15.651Z",
+      "updatedAt": "2026-10-05T15:35:15.651Z"
+    }
+  },
+  "quotes": {
+    "HdJkbHdx-cRfYPvR": {
+      "id": "HdJkbHdx-cRfYPvR",
+      "invoiceId": "8q51qrAFXyclPSXa",
+      "usdAmount": 12.5,
+      "bchAmountSats": 3971451,
+      "satoshiTag": 928,
+      "bchAmount": "0.03971451",
+      "bchUsdPrice": 314.82,
+      "settlementAsset": "BCH",
+      "expectedSettlementAmount": "0.03971451 BCH",
+      "routeSummary": "Native BCH to merchant address — no conversion",
+      "settlementPlan": null,
+      "createdAt": "2026-10-05T15:35:13.741Z",
+      "expiresAt": "2026-10-05T15:36:13.741Z"
+    },
+    "oAtykx3NHM5zzqJy": {
+      "id": "oAtykx3NHM5zzqJy",
+      "invoiceId": "jvPaHXgeCSEUFf1M",
+      "usdAmount": 10,
+      "bchAmountSats": 3177142,
+      "satoshiTag": 723,
+      "bchAmount": "0.03177142",
+      "bchUsdPrice": 314.82,
+      "settlementAsset": "PUSD",
+      "expectedSettlementAmount": "9.94 PUSD",
+      "conversionFeeBps": 30,
+      "priceImpactBps": 2,
+      "routeSummary": "Unsigned Cauldron plan BCH → PUSD via deepest pool (61 pools, 389.73 BCH). Merchant must sign.",
+      "settlementPlan": {
+        "kind": "unsigned",
+        "supply": "BCH",
+        "demand": "PUSD",
+        "tokenId": "2469acc5afa4b10cb5b5c04afb89c3a3ffd61c5da9c01e26d00951cae2a02544",
+        "poolTxid": "53ac57cead19bf1ecceb5cfdfae0e470ca473b3fcf7537169ba4cdfb14493e59",
+        "poolVout": 1,
+        "poolSats": 20313788349,
+        "poolTokens": 6373725,
+        "estimatedOutputBaseUnits": 993,
+        "note": "Not a broadcast transaction. Construction via @cashlab/cauldron and merchant signature still required before settlement can complete."
+      },
+      "createdAt": "2026-10-05T15:35:15.065Z",
+      "expiresAt": "2026-10-05T15:36:15.065Z"
+    }
+  }
+}
