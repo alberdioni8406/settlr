@@ -1,9 +1,15 @@
 /**
- * Minimal cashaddr decode + checksum (P2PKH only).
- * Uses BigInt() (no bigint literals) so it typechecks with target ES2017+.
+ * Cashaddr decode + checksum.
+ * Types (CHIP CashTokens):
+ *   0 = P2PKH (q…) — BCH only
+ *   1 = P2SH  (p…)
+ *   2 = Token-aware P2PKH (z…) — can receive CashTokens
+ *   3 = Token-aware P2SH  (r…)
  */
 
 const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+
+export type CashaddrKind = 'p2pkh' | 'p2sh' | 'token_p2pkh' | 'token_p2sh';
 
 function polymod(values: number[]): bigint {
   const GEN = [
@@ -64,18 +70,39 @@ export function normalizeCashaddr(input: string): string {
 }
 
 function friendlyError(raw: string, reason: string): Error {
-  const sample = raw.trim().slice(0, 28) || '(empty)';
+  const sample = raw.trim().slice(0, 36) || '(empty)';
   return new Error(
-    `${reason} Got: "${sample}${raw.trim().length > 28 ? '…' : ''}". ` +
-      `Expected format: bitcoincash:q… (P2PKH cashaddr, lowercase, valid checksum).`
+    `${reason} Got: "${sample}${raw.trim().length > 36 ? '…' : ''}". ` +
+      `BCH: bitcoincash:q… · CashTokens: bitcoincash:z…`
   );
 }
 
-/** Validate P2PKH cashaddr. Throws with a clear message on invalid input. */
-export function decodeCashaddr(input: string): {
+function kindFromType(type: number): CashaddrKind | null {
+  switch (type) {
+    case 0:
+      return 'p2pkh';
+    case 1:
+      return 'p2sh';
+    case 2:
+      return 'token_p2pkh';
+    case 3:
+      return 'token_p2sh';
+    default:
+      return null;
+  }
+}
+
+export interface DecodedCashaddr {
   address: string;
   hash160: string;
-} {
+  type: number;
+  kind: CashaddrKind;
+  /** True for type 2 / 3 — safe to receive CashTokens */
+  tokenAware: boolean;
+}
+
+/** Decode any standard mainnet cashaddr (q/p/z/r). Throws with a clear message. */
+export function decodeCashaddr(input: string): DecodedCashaddr {
   const trimmed = String(input || '').trim();
   if (!trimmed) {
     throw friendlyError(trimmed, 'Address is empty.');
@@ -93,10 +120,6 @@ export function decodeCashaddr(input: string): {
       'Looks like a Bitcoin (BTC) address, not Bitcoin Cash.'
     );
   }
-  if (trimmed.startsWith('bitcoincash:p') || trimmed.toLowerCase().includes(':p')) {
-    // p-type is often token-aware payload; we still accept if checksum/type ok —
-    // but note: our decoder only accepts type 0 P2PKH. Soft message below if fail.
-  }
 
   const addr = normalizeCashaddr(trimmed);
   const prefix = 'bitcoincash';
@@ -110,7 +133,7 @@ export function decodeCashaddr(input: string): {
     if (v < 0) {
       throw friendlyError(
         trimmed,
-        `Invalid cashaddr character "${c}". Only qp zry9x8gf2tvdw0s3jn54khce6mua7l allowed.`
+        `Invalid cashaddr character "${c}".`
       );
     }
     data.push(v);
@@ -127,14 +150,53 @@ export function decodeCashaddr(input: string): {
   }
   const version = decoded[0];
   const type = version >> 3;
+  const sizeCode = version & 7;
   const hash = Buffer.from(decoded.slice(1));
-  if (type !== 0 || hash.length !== 20) {
+  // size code 0 => 20 bytes (160-bit hash)
+  if (sizeCode !== 0 || hash.length !== 20) {
     throw friendlyError(
       trimmed,
-      'Only P2PKH cashaddrs (type q…, 20-byte hash) are accepted. Token-aware wallets still use a P2PKH cashaddr to receive CashTokens.'
+      'Unsupported hash size (expected 20-byte P2PKH/P2SH hash).'
     );
   }
-  return { address: addr, hash160: hash.toString('hex') };
+  const kind = kindFromType(type);
+  if (!kind) {
+    throw friendlyError(
+      trimmed,
+      `Unsupported address type ${type}. Use q (BCH), z (CashTokens P2PKH), p/r (script).`
+    );
+  }
+  return {
+    address: addr,
+    hash160: hash.toString('hex'),
+    type,
+    kind,
+    tokenAware: type === 2 || type === 3,
+  };
+}
+
+/** BCH customer payments: q… or z… (token-aware can also receive BCH). */
+export function decodeBchReceiveAddress(input: string): DecodedCashaddr {
+  const d = decodeCashaddr(input);
+  if (d.kind !== 'p2pkh' && d.kind !== 'token_p2pkh') {
+    throw friendlyError(
+      input,
+      'BCH receive address must be P2PKH (q…) or token-aware P2PKH (z…).'
+    );
+  }
+  return d;
+}
+
+/** PUSD / CashToken destination: must be token-aware (z… or r…). */
+export function decodeTokenReceiveAddress(input: string): DecodedCashaddr {
+  const d = decodeCashaddr(input);
+  if (!d.tokenAware) {
+    throw friendlyError(
+      input,
+      'CashToken destination must start with z (token P2PKH) or r (token P2SH). A plain q… address cannot receive PUSD.'
+    );
+  }
+  return d;
 }
 
 export function isValidCashaddr(input: string): boolean {
