@@ -5,7 +5,7 @@
       "name": "Cafe2",
       "defaultSettlement": "BCH",
       "destinations": {
-        "BCH": "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        "BCH": "bitcoincash:qraq6u2y8h28um2wqxylallysgr5sqkwquws8dau9r"
       },
       "createdAt": "2026-10-05T15:35:02.886Z"
     }
@@ -18,7 +18,7 @@
       "usdAmount": 12.5,
       "settlementAsset": "BCH",
       "status": "AWAITING_PAYMENT",
-      "paymentAddress": "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a",
+      "paymentAddress": "bitcoincash:qraq6u2y8h28um2wqxylallysgr5sqkwquws8dau9r",
       "bchAmountSats": 3971451,
       "currentQuoteId": "HdJkbHdx-cRfYPvR",
       "quoteExpiresAt": "2026-10-05T15:36:13.741Z",
@@ -33,7 +33,7 @@
       "usdAmount": 10,
       "settlementAsset": "PUSD",
       "status": "AWAITING_PAYMENT",
-      "paymentAddress": "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a",
+      "paymentAddress": "bitcoincash:qraq6u2y8h28um2wqxylallysgr5sqkwquws8dau9r",
       "bchAmountSats": 3177142,
       "currentQuoteId": "oAtykx3NHM5zzqJy",
       "quoteExpiresAt": "2026-10-05T15:36:15.065Z",
