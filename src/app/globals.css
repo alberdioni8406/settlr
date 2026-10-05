@@ -1,19 +1,25 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #0a0c0f;
-  --bg-elevated: #12151a;
-  --bg-card: #161a21;
-  --border: #252b36;
-  --text: #e6e9ef;
-  --text-muted: #8b95a8;
-  --accent: #0ac18e;
-  --accent-dim: #078a66;
-  --orange: #f7931a;
-  --danger: #e5484d;
-  --warning: #f5a623;
-  --success: #30a46c;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --bg: #050806;
+  --bg-elevated: #0a100c;
+  --bg-card: #0d1510;
+  --border: #1a2e22;
+  --border-hot: #2a4a35;
+  --text: #d8f3e4;
+  --text-muted: #6f9a80;
+  --accent: #00e676;
+  --accent-dim: #00b85c;
+  --accent-glow: rgba(0, 230, 118, 0.35);
+  --orange: #ff8a1f;
+  --orange-dim: #d96f0f;
+  --orange-glow: rgba(255, 138, 31, 0.3);
+  --danger: #ff4d6a;
+  --warning: #ffb020;
+  --success: #00e676;
+  --font-display: "Orbitron", "Share Tech Mono", ui-monospace, monospace;
+  --font-mono: "Share Tech Mono", "IBM Plex Mono", ui-monospace, monospace;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
 }
 
 * {
@@ -26,28 +32,30 @@ body {
   padding: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    sans-serif;
+  font-family: var(--font-body);
   min-height: 100%;
   -webkit-font-smoothing: antialiased;
 }
 
 body {
+  background-color: var(--bg);
   background-image:
-    linear-gradient(rgba(10, 12, 15, 0.92), rgba(10, 12, 15, 0.97)),
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 230, 118, 0.12), transparent),
+    radial-gradient(ellipse 40% 30% at 90% 80%, rgba(255, 138, 31, 0.08), transparent),
+    linear-gradient(rgba(5, 8, 6, 0.88), rgba(5, 8, 6, 0.96)),
     repeating-linear-gradient(
       0deg,
       transparent,
-      transparent 24px,
-      rgba(37, 43, 54, 0.35) 24px,
-      rgba(37, 43, 54, 0.35) 25px
+      transparent 28px,
+      rgba(0, 230, 118, 0.04) 28px,
+      rgba(0, 230, 118, 0.04) 29px
     ),
     repeating-linear-gradient(
       90deg,
       transparent,
-      transparent 24px,
-      rgba(37, 43, 54, 0.35) 24px,
-      rgba(37, 43, 54, 0.35) 25px
+      transparent 28px,
+      rgba(0, 230, 118, 0.04) 28px,
+      rgba(0, 230, 118, 0.04) 29px
     );
   background-attachment: fixed;
 }
@@ -55,19 +63,37 @@ body {
 a {
   color: var(--accent);
   text-decoration: none;
+  transition: color 0.15s;
 }
 a:hover {
-  text-decoration: underline;
+  color: var(--orange);
 }
 
 .mono {
   font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.display {
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .card {
-  background: var(--bg-card);
+  background: linear-gradient(145deg, rgba(13, 21, 16, 0.95), rgba(8, 14, 11, 0.98));
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 1px rgba(0, 230, 118, 0.04),
+    0 12px 40px rgba(0, 0, 0, 0.35);
+}
+
+.card-hot {
+  border-color: var(--border-hot);
+  box-shadow:
+    0 0 24px var(--accent-glow),
+    0 12px 40px rgba(0, 0, 0, 0.4);
 }
 
 .btn {
@@ -75,55 +101,101 @@ a:hover {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  padding: 0.75rem 1.25rem;
-  border-radius: 8px;
+  padding: 0.8rem 1.4rem;
+  border-radius: 6px;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   border: none;
   cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s, color 0.15s;
 }
 .btn:active {
   transform: scale(0.98);
 }
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .btn-primary {
   background: var(--accent);
-  color: #04140f;
+  color: #02140a;
+  box-shadow: 0 0 20px var(--accent-glow);
 }
-.btn-primary:hover {
-  background: var(--accent-dim);
-  color: #fff;
+.btn-primary:hover:not(:disabled) {
+  background: #33ff99;
+  box-shadow: 0 0 28px var(--accent-glow);
+}
+.btn-orange {
+  background: var(--orange);
+  color: #1a0c00;
+  box-shadow: 0 0 18px var(--orange-glow);
+}
+.btn-orange:hover:not(:disabled) {
+  background: #ff9f40;
 }
 .btn-ghost {
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-hot);
   color: var(--text);
 }
-.btn-ghost:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+.btn-ghost:hover:not(:disabled) {
+  border-color: var(--orange);
+  color: var(--orange);
+  box-shadow: 0 0 16px var(--orange-glow);
 }
 
 .input {
   width: 100%;
-  background: var(--bg);
+  background: #060b08;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  padding: 0.8rem 1rem;
   color: var(--text);
-  font-size: 1rem;
+  font-size: 0.95rem;
+  font-family: var(--font-mono);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .input:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.input.input-error {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgba(255, 77, 106, 0.2);
+}
+.input::placeholder {
+  color: #3d5c4a;
 }
 
 .label {
   display: block;
-  font-size: 0.75rem;
+  font-family: var(--font-display);
+  font-size: 0.65rem;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.12em;
   color: var(--text-muted);
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.4rem;
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.4rem;
+  line-height: 1.4;
+}
+
+.error-box {
+  background: rgba(255, 77, 106, 0.08);
+  border: 1px solid rgba(255, 77, 106, 0.35);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  color: #ff8a9a;
+  font-size: 0.85rem;
+  font-family: var(--font-mono);
 }
 
 .status-dot {
@@ -134,11 +206,37 @@ a:hover {
 }
 .status-dot.live {
   background: var(--success);
-  box-shadow: 0 0 8px var(--success);
+  box-shadow: 0 0 10px var(--success);
 }
 .status-dot.wait {
-  background: var(--warning);
+  background: var(--orange);
+  box-shadow: 0 0 8px var(--orange-glow);
 }
 .status-dot.fail {
   background: var(--danger);
+}
+
+.tag {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+  border: 1px solid var(--border-hot);
+  color: var(--accent);
+}
+
+.tag-orange {
+  border-color: rgba(255, 138, 31, 0.45);
+  color: var(--orange);
+}
+
+.glow-text {
+  text-shadow: 0 0 24px var(--accent-glow);
+}
+
+.glow-orange {
+  text-shadow: 0 0 20px var(--orange-glow);
 }
