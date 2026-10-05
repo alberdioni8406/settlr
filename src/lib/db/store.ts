@@ -56,12 +56,26 @@ export const db = {
 
   // Invoices
   createInvoice(
-    data: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt' | 'status'> & {
+    data: Omit<
+      Invoice,
+      | 'id'
+      | 'createdAt'
+      | 'updatedAt'
+      | 'status'
+      | 'paymentTxId'
+      | 'paymentDetectedAt'
+      | 'settlementTxId'
+      | 'settledAmount'
+    > & {
       status?: InvoiceStatus;
     }
   ): Invoice {
     const inv: Invoice = {
-      ...data,
+      merchantId: data.merchantId,
+      description: data.description,
+      usdAmount: data.usdAmount,
+      settlementAsset: data.settlementAsset,
+      paymentAddress: data.paymentAddress,
       id: uid(16),
       status: data.status ?? 'CREATED',
       createdAt: new Date().toISOString(),
