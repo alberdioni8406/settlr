@@ -1,50 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { markPaymentDetected, getInvoiceWithQuote } from '@/services/invoice/service';
-import { z } from 'zod';
+import { checkPaymentOnChain } from '@/services/invoice/service';
 
 /**
- * DEMO / TEST endpoint only.
- * Marks a payment as detected for state-machine testing.
- * Does NOT query the blockchain. Real payment detection must use
- * Electrum/Rostrum monitoring of the invoice payment address.
+ * Real payment check via Electrum (blockchain.scripthash.listunspent).
+ * Does NOT invent txids. Client may poll; no "mark paid" shortcut.
  */
-const bodySchema = z.object({
-  txId: z.string().min(8).optional(),
-  amountSats: z.number().int().positive().optional(),
-});
-
 export async function POST(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const data = getInvoiceWithQuote(id);
-  if (!data) {
-    return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
-  }
-
   try {
-    const json = await req.json().catch(() => ({}));
-    const parsed = bodySchema.safeParse(json);
-    if (!parsed.success) {
-      return NextResponse.json({ error: 'Invalid body' }, { status: 400 });
-    }
-
-    const amountSats =
-      parsed.data.amountSats ?? data.invoice.bchAmountSats ?? 0;
-    const txId =
-      parsed.data.txId ??
-      `demo_${Date.now().toString(16)}_${Math.random().toString(16).slice(2, 10)}`;
-
-    const updated = markPaymentDetected(id, txId, amountSats);
+    const result = await checkPaymentOnChain(id);
     return NextResponse.json({
-      note: 'DEMO ONLY — not a real blockchain detection',
-      invoice_id: updated?.id,
-      status: updated?.status,
-      payment_txid: updated?.paymentTxId,
-      payment_detected_at: updated?.paymentDetectedAt,
+      invoice_id: result.invoice?.id,
+      status: result.invoice?.status,
+      payment_txid: result.invoice?.paymentTxId,
+      payment_detected_at: result.invoice?.paymentDetectedAt,
+      found: result.found,
+      already_final: result.alreadyFinal,
+      note: result.found
+        ? 'Payment matched on-chain via Electrum'
+        : 'No matching UTXO yet — pay the exact quoted sats to the merchant cashaddr',
     });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Check failed';
+    const status = msg === 'Invoice not found' ? 404 : 500;
+    return NextResponse.json({ error: msg }, { status });
   }
+}
+
+export async function GET(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> }
+) {
+  return POST(req, ctx);
 }
