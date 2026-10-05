@@ -1,24 +1,28 @@
 /**
  * Minimal cashaddr decode + checksum (P2PKH only).
- * Spec: https://github.com/bitcoincashorg/bitcoincash.org/blob/master/spec/cashaddr.md
+ * Uses BigInt() (no bigint literals) so it typechecks with target ES2017+.
  */
 
 const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 
 function polymod(values: number[]): bigint {
   const GEN = [
-    0x98f2bc8e61n,
-    0x79b76d99e2n,
-    0xf33e5fb3c4n,
-    0xae2eabe2a8n,
-    0x1e4f43e470n,
+    BigInt('0x98f2bc8e61'),
+    BigInt('0x79b76d99e2'),
+    BigInt('0xf33e5fb3c4'),
+    BigInt('0xae2eabe2a8'),
+    BigInt('0x1e4f43e470'),
   ];
-  let c = 1n;
+  let c = BigInt(1);
+  const mask = BigInt('0x07ffffffff');
+  const one = BigInt(1);
+  const five = BigInt(5);
+  const thirtyFive = BigInt(35);
   for (const v of values) {
-    const c0 = c >> 35n;
-    c = ((c & 0x07ffffffffn) << 5n) ^ BigInt(v);
+    const c0 = c >> thirtyFive;
+    c = ((c & mask) << five) ^ BigInt(v);
     for (let i = 0; i < 5; i++) {
-      if (((c0 >> BigInt(i)) & 1n) !== 0n) c ^= GEN[i];
+      if (((c0 >> BigInt(i)) & one) !== BigInt(0)) c ^= GEN[i];
     }
   }
   return c;
@@ -74,7 +78,7 @@ export function decodeCashaddr(input: string): {
     if (v < 0) throw new Error('Invalid cashaddr character');
     data.push(v);
   }
-  if (polymod(prefixExpand(prefix).concat(data)) !== 1n) {
+  if (polymod(prefixExpand(prefix).concat(data)) !== BigInt(1)) {
     throw new Error('Invalid cashaddr checksum');
   }
   const decoded = convertBits(data.slice(0, -8), 5, 8, false);
