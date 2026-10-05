@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db/store';
-import { decodeCashaddr } from '@/lib/bch/cashaddr';
+import {
+  decodeBchReceiveAddress,
+  decodeTokenReceiveAddress,
+} from '@/lib/bch/cashaddr';
 import { z } from 'zod';
 
 export async function GET() {
@@ -17,7 +20,7 @@ export async function GET() {
 const createSchema = z.object({
   name: z.string().min(1).max(80),
   bchAddress: z.string().min(1),
-  /** CashToken-capable cashaddr where PUSD should land after swap */
+  /** Token-aware cashaddr (z…) where PUSD CashTokens should land */
   pusdAddress: z.string().optional(),
   defaultSettlement: z.enum(['BCH', 'PUSD', 'MUSD', 'PER_INVOICE']).optional(),
 });
@@ -31,7 +34,7 @@ export async function POST(req: NextRequest) {
         {
           error: 'Invalid request body',
           details: parsed.error.flatten(),
-          hint: 'Provide name, bchAddress, and pusdAddress when settling in PUSD.',
+          hint: 'BCH: bitcoincash:q… or z… · PUSD: bitcoincash:z… (token-aware)',
         },
         { status: 400 }
       );
@@ -39,7 +42,7 @@ export async function POST(req: NextRequest) {
 
     let bch: string;
     try {
-      bch = decodeCashaddr(parsed.data.bchAddress).address;
+      bch = decodeBchReceiveAddress(parsed.data.bchAddress).address;
     } catch (e: unknown) {
       return NextResponse.json(
         {
@@ -54,18 +57,25 @@ export async function POST(req: NextRequest) {
     let pusd: string | undefined;
 
     if (settlement === 'PUSD' || parsed.data.pusdAddress?.trim()) {
-      const raw = parsed.data.pusdAddress?.trim() || parsed.data.bchAddress;
-      try {
-        pusd = decodeCashaddr(raw).address;
-      } catch (e: unknown) {
+      const raw = parsed.data.pusdAddress?.trim();
+      if (!raw) {
         return NextResponse.json(
           {
             error:
-              e instanceof Error
-                ? `PUSD CashToken destination: ${e.message}`
-                : 'Invalid PUSD cashaddr',
+              'PUSD settlement requires a token-aware cashaddr starting with z (e.g. bitcoincash:z…). A plain q… address cannot receive CashTokens.',
             field: 'pusdAddress',
-            hint: 'Use a token-capable wallet cashaddr (still bitcoincash:q…). Same as BCH address is fine if that wallet supports CashTokens.',
+          },
+          { status: 400 }
+        );
+      }
+      try {
+        pusd = decodeTokenReceiveAddress(raw).address;
+      } catch (e: unknown) {
+        return NextResponse.json(
+          {
+            error: e instanceof Error ? e.message : 'Invalid PUSD cashaddr',
+            field: 'pusdAddress',
+            hint: 'Example: bitcoincash:zz7pjvq99kylyvns6fjmyawjhxwnucgn2qwyae2ye9',
           },
           { status: 400 }
         );
@@ -75,8 +85,7 @@ export async function POST(req: NextRequest) {
     if (settlement === 'PUSD' && !pusd) {
       return NextResponse.json(
         {
-          error:
-            'PUSD settlement requires a CashToken-capable cashaddr (pusdAddress).',
+          error: 'PUSD settlement requires destinations.PUSD (token-aware z… address).',
           field: 'pusdAddress',
         },
         { status: 400 }
@@ -100,7 +109,7 @@ export async function POST(req: NextRequest) {
       created_at: merchant.createdAt,
       note:
         settlement === 'PUSD'
-          ? 'PUSD will target destinations.PUSD after a merchant-signed Cauldron swap. Customer still pays BCH to destinations.BCH.'
+          ? 'Customer pays BCH to destinations.BCH. PUSD CashTokens target destinations.PUSD after a merchant-signed Cauldron swap.'
           : 'BCH payments go directly to destinations.BCH.',
     });
   } catch (e: unknown) {
