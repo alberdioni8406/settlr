@@ -2,7 +2,7 @@ import type { Invoice, SettlementAsset } from '@/types';
 import { db } from '@/lib/db/store';
 import { createQuote } from '@/services/quote/engine';
 import { isSettlementEnabled } from '@/services/registry/assets';
-import { decodeCashaddr, normalizeCashaddr } from '@/lib/bch/cashaddr';
+import { decodeBchReceiveAddress, normalizeCashaddr } from '@/lib/bch/cashaddr';
 import { findPayment } from '@/lib/bch/electrum';
 
 /** Unique 1–999 sat tag so shared merchant addresses can attribute invoices. */
@@ -39,7 +39,7 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<{
       'Merchant has no BCH destination. Register a cashaddr you control.'
     );
   }
-  const { address: paymentAddress } = decodeCashaddr(dest);
+  const { address: paymentAddress } = decodeBchReceiveAddress(dest);
 
   let settlement: SettlementAsset =
     input.settlementAsset ||
