@@ -10,16 +10,19 @@ interface InvoiceRow {
   status: string;
   bch_amount: string | null;
   payment_txid: string | null;
+  payment_address?: string;
   created_at: string;
 }
 
 export default function DashboardPage() {
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
+  const [checking, setChecking] = useState<string | null>(null);
 
   async function load() {
-    // MVP: we don't have a list-all endpoint yet; fetch known from sessionStorage
-    const ids = JSON.parse(sessionStorage.getItem('settlr_invoice_ids') || '[]') as string[];
+    const ids = JSON.parse(
+      sessionStorage.getItem('settlr_invoice_ids') || '[]'
+    ) as string[];
     const rows: InvoiceRow[] = [];
     for (const id of ids.slice(0, 20)) {
       try {
@@ -33,6 +36,7 @@ export default function DashboardPage() {
             status: j.status,
             bch_amount: j.bch_amount,
             payment_txid: j.payment_txid,
+            payment_address: j.payment_address,
             created_at: j.created_at,
           });
         }
@@ -45,23 +49,34 @@ export default function DashboardPage() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 10000);
+    const t = setInterval(load, 15000);
     return () => clearInterval(t);
   }, []);
 
-  async function demoDetect(id: string) {
+  async function checkChain(id: string) {
+    setChecking(id);
     setMsg(null);
-    const res = await fetch(`/api/invoices/${id}/detect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    const j = await res.json();
-    if (res.ok) {
-      setMsg(`Demo detect: ${j.status} (tx ${j.payment_txid})`);
-      load();
-    } else {
-      setMsg(j.error || 'Failed');
+    try {
+      const res = await fetch(`/api/invoices/${id}/detect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      const j = await res.json();
+      if (res.ok) {
+        setMsg(
+          j.found
+            ? `On-chain: ${j.status} · tx ${j.payment_txid}`
+            : j.note || 'No matching UTXO yet'
+        );
+        load();
+      } else {
+        setMsg(j.error || 'Check failed');
+      }
+    } catch {
+      setMsg('Electrum check failed');
+    } finally {
+      setChecking(null);
     }
   }
 
@@ -71,7 +86,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold">Merchant dashboard</h1>
           <p className="text-sm text-[var(--text-muted)]">
-            Demo merchant · Non-custodial overview
+            Non-custodial · payments go to your cashaddr
           </p>
         </div>
         <Link href="/merchant" className="btn btn-primary no-underline">
@@ -84,17 +99,27 @@ export default function DashboardPage() {
           { l: 'Tracked invoices', v: String(invoices.length) },
           {
             l: 'Awaiting payment',
-            v: String(invoices.filter((i) => i.status === 'AWAITING_PAYMENT').length),
+            v: String(
+              invoices.filter((i) => i.status === 'AWAITING_PAYMENT').length
+            ),
           },
           {
-            l: 'Validated',
+            l: 'Validated / required',
             v: String(
               invoices.filter((i) =>
-                ['PAYMENT_VALIDATED', 'SETTLING', 'SETTLED'].includes(i.status)
+                [
+                  'PAYMENT_VALIDATED',
+                  'SETTLEMENT_REQUIRED',
+                  'SETTLING',
+                  'SETTLED',
+                ].includes(i.status)
               ).length
             ),
           },
-          { l: 'Settled', v: String(invoices.filter((i) => i.status === 'SETTLED').length) },
+          {
+            l: 'Settled',
+            v: String(invoices.filter((i) => i.status === 'SETTLED').length),
+          },
         ].map((s) => (
           <div key={s.l} className="card p-4">
             <p className="label mb-1">{s.l}</p>
@@ -113,8 +138,8 @@ export default function DashboardPage() {
         </div>
         {invoices.length === 0 ? (
           <div className="p-6 text-sm text-[var(--text-muted)]">
-            No invoices in this browser session yet. Create one from the Merchant
-            page. (In-memory store — create in this tab session.)
+            No invoices in this browser session yet. Onboard with your cashaddr
+            on the Merchant page, then create an invoice.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -131,11 +156,18 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {invoices.map((inv) => (
-                  <tr key={inv.invoice_id} className="border-b border-[var(--border)]">
+                  <tr
+                    key={inv.invoice_id}
+                    className="border-b border-[var(--border)]"
+                  >
                     <td className="px-4 py-2 mono text-xs">
-                      <Link href={`/pay/${inv.invoice_id}`}>{inv.invoice_id.slice(0, 10)}…</Link>
+                      <Link href={`/pay/${inv.invoice_id}`}>
+                        {inv.invoice_id.slice(0, 10)}…
+                      </Link>
                     </td>
-                    <td className="px-4 py-2 mono">${inv.usd_amount.toFixed(2)}</td>
+                    <td className="px-4 py-2 mono">
+                      ${inv.usd_amount.toFixed(2)}
+                    </td>
                     <td className="px-4 py-2 mono">{inv.bch_amount ?? '—'}</td>
                     <td className="px-4 py-2">{inv.settlement_asset}</td>
                     <td className="px-4 py-2">
@@ -144,17 +176,23 @@ export default function DashboardPage() {
                       </span>
                     </td>
                     <td className="px-4 py-2 space-x-2">
-                      <Link href={`/pay/${inv.invoice_id}`} className="text-xs">
+                      <Link
+                        href={`/pay/${inv.invoice_id}`}
+                        className="text-xs"
+                      >
                         Open
                       </Link>
                       {inv.status === 'AWAITING_PAYMENT' && (
                         <button
                           type="button"
-                          className="text-xs text-[var(--warning)]"
-                          onClick={() => demoDetect(inv.invoice_id)}
-                          title="Demo only — not real chain detection"
+                          className="text-xs text-[var(--accent)]"
+                          onClick={() => checkChain(inv.invoice_id)}
+                          disabled={checking === inv.invoice_id}
+                          title="Query Electrum for a matching UTXO"
                         >
-                          Demo detect
+                          {checking === inv.invoice_id
+                            ? 'Checking…'
+                            : 'Check chain'}
                         </button>
                       )}
                     </td>
@@ -167,9 +205,9 @@ export default function DashboardPage() {
       </div>
 
       <p className="mt-6 text-xs text-[var(--text-muted)]">
-        Payment detection is demo-only. Production must monitor the payment
-        address via Electrum/Rostrum. Settlement never pretends to succeed
-        without a real non-custodial path.
+        Payment detection uses Electrum listunspent against your merchant
+        cashaddr and the exact quoted sats (including attribution tag). There
+        is no demo mark-paid path.
       </p>
     </div>
   );
