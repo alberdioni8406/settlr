@@ -63,31 +63,76 @@ export function normalizeCashaddr(input: string): string {
   return addr;
 }
 
-/** Validate P2PKH cashaddr. Throws on invalid. */
+function friendlyError(raw: string, reason: string): Error {
+  const sample = raw.trim().slice(0, 28) || '(empty)';
+  return new Error(
+    `${reason} Got: "${sample}${raw.trim().length > 28 ? '…' : ''}". ` +
+      `Expected format: bitcoincash:q… (P2PKH cashaddr, lowercase, valid checksum).`
+  );
+}
+
+/** Validate P2PKH cashaddr. Throws with a clear message on invalid input. */
 export function decodeCashaddr(input: string): {
   address: string;
   hash160: string;
 } {
-  const addr = normalizeCashaddr(input);
+  const trimmed = String(input || '').trim();
+  if (!trimmed) {
+    throw friendlyError(trimmed, 'Address is empty.');
+  }
+  if (/\s/.test(trimmed)) {
+    throw friendlyError(trimmed, 'Address contains spaces.');
+  }
+  if (
+    trimmed.startsWith('1') ||
+    trimmed.startsWith('3') ||
+    trimmed.startsWith('bc1')
+  ) {
+    throw friendlyError(
+      trimmed,
+      'Looks like a Bitcoin (BTC) address, not Bitcoin Cash.'
+    );
+  }
+  if (trimmed.startsWith('bitcoincash:p') || trimmed.toLowerCase().includes(':p')) {
+    // p-type is often token-aware payload; we still accept if checksum/type ok —
+    // but note: our decoder only accepts type 0 P2PKH. Soft message below if fail.
+  }
+
+  const addr = normalizeCashaddr(trimmed);
   const prefix = 'bitcoincash';
   const payload = addr.slice(prefix.length + 1);
-  if (!payload || payload.length < 8) throw new Error('Invalid cashaddr');
+  if (!payload || payload.length < 8) {
+    throw friendlyError(trimmed, 'Cashaddr payload is too short.');
+  }
   const data: number[] = [];
   for (const c of payload) {
     const v = CHARSET.indexOf(c);
-    if (v < 0) throw new Error('Invalid cashaddr character');
+    if (v < 0) {
+      throw friendlyError(
+        trimmed,
+        `Invalid cashaddr character "${c}". Only qp zry9x8gf2tvdw0s3jn54khce6mua7l allowed.`
+      );
+    }
     data.push(v);
   }
   if (polymod(prefixExpand(prefix).concat(data)) !== BigInt(1)) {
-    throw new Error('Invalid cashaddr checksum');
+    throw friendlyError(
+      trimmed,
+      'Cashaddr checksum failed — typo or incomplete address.'
+    );
   }
   const decoded = convertBits(data.slice(0, -8), 5, 8, false);
-  if (!decoded || decoded.length < 21) throw new Error('Invalid cashaddr payload');
+  if (!decoded || decoded.length < 21) {
+    throw friendlyError(trimmed, 'Cashaddr payload could not be decoded.');
+  }
   const version = decoded[0];
   const type = version >> 3;
   const hash = Buffer.from(decoded.slice(1));
   if (type !== 0 || hash.length !== 20) {
-    throw new Error('Only P2PKH cashaddr destinations are accepted');
+    throw friendlyError(
+      trimmed,
+      'Only P2PKH cashaddrs (type q…, 20-byte hash) are accepted. Token-aware wallets still use a P2PKH cashaddr to receive CashTokens.'
+    );
   }
   return { address: addr, hash160: hash.toString('hex') };
 }
