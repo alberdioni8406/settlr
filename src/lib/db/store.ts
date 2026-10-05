@@ -1,6 +1,5 @@
 /**
  * In-memory store for MVP.
- * Replace with Prisma + SQLite/Postgres for persistence.
  * Never stores private keys or seeds.
  */
 
@@ -11,26 +10,7 @@ const merchants = new Map<string, Merchant>();
 const invoices = new Map<string, Invoice>();
 const quotes = new Map<string, Quote>();
 
-// Seed a demo merchant for development
-function ensureDemoMerchant() {
-  if (merchants.size === 0) {
-    const id = 'demo-merchant';
-    merchants.set(id, {
-      id,
-      name: 'Demo Coffee Shop',
-      createdAt: new Date().toISOString(),
-      defaultSettlement: 'BCH',
-      destinations: {
-        // Placeholder — merchants must supply their own controlled addresses
-        BCH: 'bitcoincash:qpdemoaddressreplaceme000000000000000000',
-      },
-    });
-  }
-}
-ensureDemoMerchant();
-
 export const db = {
-  // Merchants
   createMerchant(data: Omit<Merchant, 'id' | 'createdAt'>): Merchant {
     const m: Merchant = {
       ...data,
@@ -54,7 +34,6 @@ export const db = {
     return updated;
   },
 
-  // Invoices
   createInvoice(
     data: Omit<
       Invoice,
@@ -112,8 +91,12 @@ export const db = {
       .filter((i) => i.merchantId === merchantId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   },
+  listAllInvoices(): Invoice[] {
+    return Array.from(invoices.values()).sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt)
+    );
+  },
 
-  // Quotes
   saveQuote(q: Quote): void {
     quotes.set(q.id, q);
   },
