@@ -12,6 +12,7 @@ export default function DashboardPage() {
   const [invoices, setInvoices] = useState<LocalInvoice[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [checking, setChecking] = useState<string | null>(null);
+  const [planJson, setPlanJson] = useState<string | null>(null);
 
   function load() {
     setInvoices(loadInvoices());
@@ -63,13 +64,53 @@ export default function DashboardPage() {
     }
   }
 
+  async function buildPlan(inv: LocalInvoice) {
+    setMsg(null);
+    setPlanJson(null);
+    const dest = inv.pusd_address;
+    if (!dest) {
+      setMsg('This invoice has no PUSD (z…) destination. Re-create with a token address.');
+      return;
+    }
+    const sats = inv.bch_amount_sats;
+    if (!sats) {
+      setMsg('Missing quoted sats');
+      return;
+    }
+    try {
+      const res = await fetch('/api/settle/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          settlementAsset: inv.settlement_asset === 'MUSD' ? 'MUSD' : 'PUSD',
+          bchSatsIn: sats,
+          tokenDestination: dest,
+          paymentTxId: inv.payment_txid,
+        }),
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        setMsg(j.error || 'Plan failed');
+        return;
+      }
+      updateInvoice(inv.invoice_id, { settlement_plan: j.plan });
+      load();
+      setPlanJson(JSON.stringify(j, null, 2));
+      setMsg(
+        `Unsigned plan ready · ~${j.plan.estimated_tokens_human} · ${j.plan.pools.length} pools. Use your own CashLab/SDK agent to sign.`
+      );
+    } catch {
+      setMsg('Could not build settlement plan');
+    }
+  }
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-10">
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="display text-2xl font-bold glow-text">Merchant dashboard</h1>
           <p className="text-sm text-[var(--text-muted)]">
-            Saved in this browser · chain check reads the merchant address
+            Browser ledger · optional unsigned PUSD plans for your own signer
           </p>
         </div>
         <Link href="/merchant" className="btn btn-primary no-underline">
@@ -111,7 +152,6 @@ export default function DashboardPage() {
         {invoices.length === 0 ? (
           <div className="p-6 text-sm text-[var(--text-muted)]">
             No invoices in this browser yet. Create one on the Merchant page.
-            They are stored locally so a server restart cannot erase them.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -156,6 +196,17 @@ export default function DashboardPage() {
                           {checking === inv.invoice_id ? 'Checking…' : 'Check chain'}
                         </button>
                       )}
+                      {(inv.status === 'SETTLEMENT_REQUIRED' ||
+                        inv.status === 'PAYMENT_VALIDATED') &&
+                        inv.settlement_asset !== 'BCH' && (
+                          <button
+                            type="button"
+                            className="text-xs text-[var(--orange)]"
+                            onClick={() => buildPlan(inv)}
+                          >
+                            Build PUSD plan
+                          </button>
+                        )}
                     </td>
                   </tr>
                 ))}
@@ -164,6 +215,18 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {planJson && (
+        <div className="card mt-6 p-4">
+          <p className="label mb-2">Unsigned settlement plan (for your agent)</p>
+          <pre className="text-xs mono overflow-x-auto max-h-96 whitespace-pre-wrap text-[var(--text-muted)]">
+            {planJson}
+          </pre>
+          <p className="hint mt-2">
+            Pipe this into CashLab or cauldron-swap-sdk. See docs/SETTLEMENT_PLUGIN.md.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
