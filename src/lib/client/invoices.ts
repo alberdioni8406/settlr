@@ -1,6 +1,5 @@
 /**
- * Browser-local invoice ledger.
- * Vercel functions do not share memory, so the dashboard cannot rely on the server store.
+ * Browser-local invoice ledger (Vercel-safe).
  */
 
 export interface LocalInvoice {
@@ -16,6 +15,10 @@ export interface LocalInvoice {
   expected_settlement?: string | null;
   expires_at?: string | null;
   payment_txid?: string | null;
+  /** Token-aware z… address for PUSD */
+  pusd_address?: string | null;
+  /** Last unsigned settlement plan JSON */
+  settlement_plan?: unknown;
   created_at: string;
 }
 
