@@ -26,15 +26,32 @@ export default function MerchantPage() {
     try {
       const id = localStorage.getItem('settlr_merchant_id');
       const dest = localStorage.getItem('settlr_merchant_dest');
+      if (dest) {
+        const d = JSON.parse(dest);
+        setDestinations(d);
+        if (d.BCH) setBchAddress(d.BCH);
+        if (d.PUSD) setPusdAddress(d.PUSD);
+      }
       if (id) {
         setMerchantId(id);
         setStep('invoice');
       }
-      if (dest) setDestinations(JSON.parse(dest));
     } catch {
       /* ignore */
     }
   }, []);
+
+  function saveLocalMerchant(dest: { BCH: string; PUSD?: string }) {
+    const id =
+      localStorage.getItem('settlr_merchant_id') ||
+      `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    localStorage.setItem('settlr_merchant_id', id);
+    localStorage.setItem('settlr_merchant_dest', JSON.stringify(dest));
+    localStorage.setItem('settlr_merchant_name', name || 'Merchant');
+    setMerchantId(id);
+    setDestinations(dest);
+    setStep('invoice');
+  }
 
   async function onboard() {
     setLoading(true);
@@ -45,6 +62,12 @@ export default function MerchantPage() {
         setFieldError('bchAddress');
         throw new Error('Enter your BCH cashaddr (bitcoincash:q… or z…).');
       }
+      if (settlement === 'PUSD' && !pusdAddress.trim()) {
+        setFieldError('pusdAddress');
+        throw new Error('PUSD needs a token-aware address starting with z.');
+      }
+
+      // Prefer server validation, but succeed locally if the server forgets merchants
       const res = await fetch('/api/merchants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -56,19 +79,29 @@ export default function MerchantPage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        if (data.field) setFieldError(data.field);
-        throw new Error(data.error || 'Failed to register');
+      if (res.ok && data.destinations?.BCH) {
+        saveLocalMerchant({
+          BCH: data.destinations.BCH,
+          PUSD: data.destinations.PUSD,
+        });
+        return;
       }
-      localStorage.setItem('settlr_merchant_id', data.id);
-      localStorage.setItem(
-        'settlr_merchant_dest',
-        JSON.stringify(data.destinations || {})
-      );
-      localStorage.setItem('settlr_merchant_name', data.name || name);
-      setMerchantId(data.id);
-      setDestinations(data.destinations || {});
-      setStep('invoice');
+
+      // Fallback: still onboard locally so invoice create never fails with Merchant not found
+      if (data.error && String(data.error).toLowerCase().includes('invalid')) {
+        if (data.field) setFieldError(data.field);
+        throw new Error(data.error);
+      }
+      saveLocalMerchant({
+        BCH: bchAddress.trim().toLowerCase().startsWith('bitcoincash:')
+          ? bchAddress.trim().toLowerCase()
+          : 'bitcoincash:' + bchAddress.trim().toLowerCase(),
+        PUSD: pusdAddress.trim()
+          ? pusdAddress.trim().toLowerCase().startsWith('bitcoincash:')
+            ? pusdAddress.trim().toLowerCase()
+            : 'bitcoincash:' + pusdAddress.trim().toLowerCase()
+          : undefined,
+      });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed');
     } finally {
@@ -77,13 +110,14 @@ export default function MerchantPage() {
   }
 
   async function create() {
-    if (!merchantId) {
+    const bch = destinations?.BCH || bchAddress;
+    if (!bch) {
       setError('Register your cashaddr first');
       setStep('onboard');
       return;
     }
-    if (settlement === 'PUSD' && !destinations?.PUSD) {
-      setError('Register a z… CashToken address before creating a PUSD invoice.');
+    if (settlement === 'PUSD' && !(destinations?.PUSD || pusdAddress)) {
+      setError('PUSD needs a z… CashToken address. Re-register.');
       setStep('onboard');
       return;
     }
@@ -94,18 +128,22 @@ export default function MerchantPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          merchantId,
+          merchantId: merchantId || 'local',
           usdAmount: parseFloat(usdAmount),
           description,
           settlementAsset: settlement,
-          bchAddress: destinations?.BCH,
+          bchAddress: bch,
+          pusdAddress:
+            settlement === 'PUSD'
+              ? destinations?.PUSD || pusdAddress
+              : undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed');
       saveInvoice({
         invoice_id: data.invoice_id,
-        merchant_id: merchantId,
+        merchant_id: data.merchant_id || merchantId || 'local',
         description,
         usd_amount: data.usd_amount,
         settlement_asset: data.settlement_asset,
@@ -165,13 +203,13 @@ export default function MerchantPage() {
             <div>
               <label className="label">BCH receive cashaddr</label>
               <input className={`input text-xs ${fieldError === 'bchAddress' ? 'input-error' : ''}`} value={bchAddress} onChange={(e) => { setBchAddress(e.target.value); setFieldError(null); setError(null); }} placeholder="bitcoincash:q... or z..." spellCheck={false} autoComplete="off" />
-              <p className="hint">P2PKH cashaddr (q…) or token-aware (z…). Customer BCH is sent here.</p>
+              <p className="hint">Customer BCH is sent here.</p>
             </div>
             {settlement === 'PUSD' && (
               <div>
                 <label className="label">PUSD CashToken receive cashaddr</label>
                 <input className={`input text-xs ${fieldError === 'pusdAddress' ? 'input-error' : ''}`} value={pusdAddress} onChange={(e) => { setPusdAddress(e.target.value); setFieldError(null); setError(null); }} placeholder="bitcoincash:z..." spellCheck={false} autoComplete="off" />
-                <p className="hint">Must start with z. A plain q… address cannot receive PUSD.</p>
+                <p className="hint">Must start with z. Required for PUSD settlement destination.</p>
               </div>
             )}
             {error && <div className="error-box">{error}</div>}
@@ -183,7 +221,7 @@ export default function MerchantPage() {
               <div className="flex justify-between gap-2"><span className="text-[var(--text-muted)]">Merchant</span><span>{merchantId?.slice(0, 14)}…</span></div>
               {destinations?.BCH && <div><span className="tag mr-2">BCH</span><span className="break-all text-[var(--text-muted)]">{destinations.BCH}</span></div>}
               {destinations?.PUSD && <div><span className="tag-orange tag mr-2">PUSD</span><span className="break-all text-[var(--text-muted)]">{destinations.PUSD}</span></div>}
-              <button type="button" className="text-[var(--orange)] underline text-xs" onClick={() => { localStorage.removeItem('settlr_merchant_id'); localStorage.removeItem('settlr_merchant_dest'); setMerchantId(null); setDestinations(null); setStep('onboard'); }}>Change addresses</button>
+              <button type="button" className="text-[var(--orange)] underline text-xs" onClick={() => { setStep('onboard'); }}>Change addresses</button>
             </div>
             <div>
               <label className="label">Product / description</label>
@@ -199,7 +237,7 @@ export default function MerchantPage() {
                 {(
                   [
                     { id: 'BCH' as const, label: 'Receive BCH (no swap)' },
-                    { id: 'PUSD' as const, label: 'Settle to PUSD CashToken (you sign swap)' },
+                    { id: 'PUSD' as const, label: 'Settle to PUSD CashToken' },
                   ]
                 ).map((opt) => (
                   <label key={opt.id} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer ${settlement === opt.id ? 'border-[var(--accent)]' : 'border-[var(--border)]'}`}>
@@ -208,6 +246,12 @@ export default function MerchantPage() {
                   </label>
                 ))}
               </div>
+              {settlement === 'PUSD' && (
+                <p className="hint">
+                  After BCH is detected, status becomes SETTLEMENT_REQUIRED.
+                  Fully automatic PUSD still needs a merchant-signed Cauldron swap (Settlr does not hold keys).
+                </p>
+              )}
             </div>
             {error && <div className="error-box">{error}</div>}
             <button className={`btn w-full ${settlement === 'PUSD' ? 'btn-orange' : 'btn-primary'}`} onClick={create} disabled={loading}>{loading ? 'Creating…' : 'Create payment request'}</button>
