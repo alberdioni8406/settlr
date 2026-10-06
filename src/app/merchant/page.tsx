@@ -154,6 +154,7 @@ export default function MerchantPage() {
         expected_settlement: data.expected_settlement,
         expires_at: data.expires_at,
         payment_txid: null,
+        pusd_address: data.pusd_address || destinations?.PUSD || pusdAddress || null,
         created_at: new Date().toISOString(),
       });
       router.push(`/pay/${data.invoice_id}`);
