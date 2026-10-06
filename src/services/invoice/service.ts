@@ -3,7 +3,7 @@ import { db } from '@/lib/db/store';
 import { createQuote } from '@/services/quote/engine';
 import { isSettlementEnabled } from '@/services/registry/assets';
 import { decodeBchReceiveAddress, normalizeCashaddr } from '@/lib/bch/cashaddr';
-import { findPayment } from '@/lib/bch/electrum';
+import { listUnspent, matchPayment } from '@/lib/bch/electrum';
 
 /** Unique 1–999 sat tag so shared merchant addresses can attribute invoices. */
 function allocateSatoshiTag(merchantId: string, baseSats: number): number {
@@ -149,7 +149,7 @@ export function applyPaymentDetection(
   });
 }
 
-/** Poll Electrum for this invoice's payment (real chain only). */
+/** Poll chain for this invoice's payment (real UTXOs only). */
 export async function checkPaymentOnChain(invoiceId: string) {
   const invoice = db.getInvoice(invoiceId);
   if (!invoice) throw new Error('Invoice not found');
@@ -158,10 +158,10 @@ export async function checkPaymentOnChain(invoiceId: string) {
     return { invoice, found: false, alreadyFinal: true };
   }
 
-  const utxo = await findPayment(
-    normalizeCashaddr(invoice.paymentAddress),
-    invoice.bchAmountSats
+  const { utxos } = await listUnspent(
+    normalizeCashaddr(invoice.paymentAddress)
   );
+  const utxo = matchPayment(utxos, invoice.bchAmountSats);
   if (!utxo) {
     return { invoice, found: false, alreadyFinal: false };
   }
