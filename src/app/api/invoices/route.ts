@@ -1,18 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createInvoice } from '@/services/invoice/service';
 import { createQuote } from '@/services/quote/engine';
 import { decodeBchReceiveAddress } from '@/lib/bch/cashaddr';
 import { isSettlementEnabled } from '@/services/registry/assets';
 import { z } from 'zod';
 import { uid } from '@/lib/utils/id';
 
+/**
+ * Invoice creation is address-first.
+ * Server-side merchant memory is unreliable on Vercel, so the browser
+ * always sends the cashaddr. merchantId is only a client tag.
+ */
 const bodySchema = z.object({
-  merchantId: z.string().min(1),
+  merchantId: z.string().min(1).optional(),
   usdAmount: z.number().positive().max(1_000_000),
   description: z.string().max(200).optional(),
   settlementAsset: z.enum(['BCH', 'PUSD', 'MUSD']).optional(),
-  /** Used when the server no longer has the merchant (Vercel memory). */
-  bchAddress: z.string().optional(),
+  bchAddress: z.string().min(1),
+  pusdAddress: z.string().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -21,47 +25,73 @@ export async function POST(req: NextRequest) {
     const parsed = bodySchema.safeParse(json);
     if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Invalid request', details: parsed.error.flatten() },
+        {
+          error: 'Invalid request',
+          details: parsed.error.flatten(),
+          hint: 'bchAddress is required (your merchant cashaddr).',
+        },
         { status: 400 }
       );
-    }
-
-    try {
-      const { invoice, quote } = await createInvoice(parsed.data);
-      return NextResponse.json(payload(invoice, quote));
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '';
-      if (!msg.includes('Merchant not found') || !parsed.data.bchAddress) {
-        throw e;
-      }
     }
 
     const settlement = parsed.data.settlementAsset || 'BCH';
     if (!isSettlementEnabled(settlement)) {
       return NextResponse.json(
-        { error: `Settlement asset ${settlement} is not enabled` },
+        {
+          error: `Settlement asset ${settlement} is not enabled`,
+          hint: settlement === 'MUSD' ? 'MUSD is disabled until contract health is verified.' : undefined,
+        },
         { status: 400 }
       );
     }
-    const { address } = decodeBchReceiveAddress(parsed.data.bchAddress!);
+
+    let address: string;
+    try {
+      address = decodeBchReceiveAddress(parsed.data.bchAddress).address;
+    } catch (e: unknown) {
+      return NextResponse.json(
+        {
+          error: e instanceof Error ? e.message : 'Invalid BCH cashaddr',
+          field: 'bchAddress',
+        },
+        { status: 400 }
+      );
+    }
+
+    if (settlement === 'PUSD' && !parsed.data.pusdAddress?.trim()) {
+      return NextResponse.json(
+        {
+          error:
+            'PUSD invoices need a token-aware receive address (bitcoincash:z…).',
+          field: 'pusdAddress',
+        },
+        { status: 400 }
+      );
+    }
+
     const invoiceId = uid(16);
     const quote = await createQuote({
       invoiceId,
       usdAmount: parsed.data.usdAmount,
       settlementAsset: settlement,
     });
-    const tagged = quote.bchAmountSats + ((Date.now() % 997) + 1);
+
+    // Satoshi tag for attribution on shared merchant addresses
+    const tag = (Date.now() % 997) + 1;
+    const tagged = quote.bchAmountSats + tag;
     quote.bchAmountSats = tagged;
     quote.bchAmount = (tagged / 1e8).toFixed(8);
 
     return NextResponse.json({
       invoice_id: invoiceId,
+      merchant_id: parsed.data.merchantId || 'local',
       payment_uri: `bitcoincash:${address.replace('bitcoincash:', '')}?amount=${quote.bchAmount}`,
       payment_address: address,
       bch_amount: quote.bchAmount,
       bch_amount_sats: quote.bchAmountSats,
       usd_amount: parsed.data.usdAmount,
       settlement_asset: settlement,
+      pusd_address: parsed.data.pusdAddress || null,
       expected_settlement: quote.expectedSettlementAmount,
       route_summary: quote.routeSummary,
       conversion_fee_bps: quote.conversionFeeBps,
@@ -69,47 +99,11 @@ export async function POST(req: NextRequest) {
       expires_at: quote.expiresAt,
       status: 'AWAITING_PAYMENT',
       quote_id: quote.id,
+      description: parsed.data.description || null,
       persisted: 'browser',
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal error';
     return NextResponse.json({ error: msg }, { status: 400 });
   }
-}
-
-function payload(
-  invoice: {
-    id: string;
-    paymentAddress: string;
-    usdAmount: number;
-    settlementAsset: string;
-    status: string;
-  },
-  quote: {
-    bchAmount: string;
-    bchAmountSats: number;
-    expectedSettlementAmount: string;
-    routeSummary?: string;
-    conversionFeeBps?: number;
-    priceImpactBps?: number;
-    expiresAt: string;
-    id: string;
-  }
-) {
-  return {
-    invoice_id: invoice.id,
-    payment_uri: `bitcoincash:${invoice.paymentAddress.replace('bitcoincash:', '')}?amount=${quote.bchAmount}`,
-    payment_address: invoice.paymentAddress,
-    bch_amount: quote.bchAmount,
-    bch_amount_sats: quote.bchAmountSats,
-    usd_amount: invoice.usdAmount,
-    settlement_asset: invoice.settlementAsset,
-    expected_settlement: quote.expectedSettlementAmount,
-    route_summary: quote.routeSummary,
-    conversion_fee_bps: quote.conversionFeeBps,
-    price_impact_bps: quote.priceImpactBps,
-    expires_at: quote.expiresAt,
-    status: invoice.status,
-    quote_id: quote.id,
-  };
 }
