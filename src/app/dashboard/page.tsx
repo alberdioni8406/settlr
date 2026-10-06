@@ -2,79 +2,62 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-
-interface InvoiceRow {
-  invoice_id: string;
-  usd_amount: number;
-  settlement_asset: string;
-  status: string;
-  bch_amount: string | null;
-  payment_txid: string | null;
-  payment_address?: string;
-  created_at: string;
-}
+import {
+  loadInvoices,
+  updateInvoice,
+  type LocalInvoice,
+} from '@/lib/client/invoices';
 
 export default function DashboardPage() {
-  const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [invoices, setInvoices] = useState<LocalInvoice[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [checking, setChecking] = useState<string | null>(null);
 
-  async function load() {
-    const ids = JSON.parse(
-      sessionStorage.getItem('settlr_invoice_ids') || '[]'
-    ) as string[];
-    const rows: InvoiceRow[] = [];
-    for (const id of ids.slice(0, 20)) {
-      try {
-        const res = await fetch(`/api/invoices/${id}`, { cache: 'no-store' });
-        if (res.ok) {
-          const j = await res.json();
-          rows.push({
-            invoice_id: j.invoice_id,
-            usd_amount: j.usd_amount,
-            settlement_asset: j.settlement_asset,
-            status: j.status,
-            bch_amount: j.bch_amount,
-            payment_txid: j.payment_txid,
-            payment_address: j.payment_address,
-            created_at: j.created_at,
-          });
-        }
-      } catch {
-        /* skip */
-      }
-    }
-    setInvoices(rows);
+  function load() {
+    setInvoices(loadInvoices());
   }
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 15000);
-    return () => clearInterval(t);
   }, []);
 
-  async function checkChain(id: string) {
-    setChecking(id);
+  async function checkChain(inv: LocalInvoice) {
+    setChecking(inv.invoice_id);
     setMsg(null);
     try {
-      const res = await fetch(`/api/invoices/${id}/detect`, {
+      const res = await fetch('/api/watch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify({
+          address: inv.payment_address,
+          expectedSats: inv.bch_amount_sats,
+          settlementAsset: inv.settlement_asset,
+        }),
       });
       const j = await res.json();
-      if (res.ok) {
-        setMsg(
-          j.found
-            ? `On-chain: ${j.status} · tx ${j.payment_txid}`
-            : j.note || 'No matching UTXO yet'
-        );
-        load();
-      } else {
+      if (!res.ok) {
         setMsg(j.error || 'Check failed');
+        return;
+      }
+      if (j.found) {
+        updateInvoice(inv.invoice_id, {
+          status: j.status,
+          payment_txid: j.payment_txid,
+        });
+        load();
+        setMsg(`On-chain ${j.status} · ${j.paid_sats} sats · tx ${j.payment_txid}`);
+      } else {
+        const near = (j.nearest || [])
+          .map((n: { sats: number }) => `${n.sats} sats`)
+          .join(', ');
+        setMsg(
+          near
+            ? `${j.note} Closest: ${near}`
+            : j.note || 'No matching payment yet'
+        );
       }
     } catch {
-      setMsg('Electrum check failed');
+      setMsg('Chain check failed');
     } finally {
       setChecking(null);
     }
@@ -86,7 +69,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="display text-2xl font-bold glow-text">Merchant dashboard</h1>
           <p className="text-sm text-[var(--text-muted)]">
-            Non-custodial · payments go to your cashaddr
+            Saved in this browser · chain check reads the merchant address
           </p>
         </div>
         <Link href="/merchant" className="btn btn-primary no-underline">
@@ -99,21 +82,12 @@ export default function DashboardPage() {
           { l: 'Tracked invoices', v: String(invoices.length) },
           {
             l: 'Awaiting payment',
-            v: String(
-              invoices.filter((i) => i.status === 'AWAITING_PAYMENT').length
-            ),
+            v: String(invoices.filter((i) => i.status === 'AWAITING_PAYMENT').length),
           },
           {
-            l: 'Validated / required',
+            l: 'Needs settlement',
             v: String(
-              invoices.filter((i) =>
-                [
-                  'PAYMENT_VALIDATED',
-                  'SETTLEMENT_REQUIRED',
-                  'SETTLING',
-                  'SETTLED',
-                ].includes(i.status)
-              ).length
+              invoices.filter((i) => i.status === 'SETTLEMENT_REQUIRED').length
             ),
           },
           {
@@ -128,9 +102,7 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {msg && (
-        <p className="mb-4 text-sm text-[var(--accent)] mono">{msg}</p>
-      )}
+      {msg && <p className="mb-4 text-sm text-[var(--accent)] mono">{msg}</p>}
 
       <div className="card overflow-hidden">
         <div className="px-5 py-3 border-b border-[var(--border)] font-semibold">
@@ -138,8 +110,8 @@ export default function DashboardPage() {
         </div>
         {invoices.length === 0 ? (
           <div className="p-6 text-sm text-[var(--text-muted)]">
-            No invoices in this browser session yet. Onboard with your cashaddr
-            on the Merchant page, then create an invoice.
+            No invoices in this browser yet. Create one on the Merchant page.
+            They are stored locally so a server restart cannot erase them.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -156,18 +128,13 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {invoices.map((inv) => (
-                  <tr
-                    key={inv.invoice_id}
-                    className="border-b border-[var(--border)]"
-                  >
+                  <tr key={inv.invoice_id} className="border-b border-[var(--border)]">
                     <td className="px-4 py-2 mono text-xs">
                       <Link href={`/pay/${inv.invoice_id}`}>
                         {inv.invoice_id.slice(0, 10)}…
                       </Link>
                     </td>
-                    <td className="px-4 py-2 mono">
-                      ${inv.usd_amount.toFixed(2)}
-                    </td>
+                    <td className="px-4 py-2 mono">${inv.usd_amount.toFixed(2)}</td>
                     <td className="px-4 py-2 mono">{inv.bch_amount ?? '—'}</td>
                     <td className="px-4 py-2">{inv.settlement_asset}</td>
                     <td className="px-4 py-2">
@@ -176,23 +143,17 @@ export default function DashboardPage() {
                       </span>
                     </td>
                     <td className="px-4 py-2 space-x-2">
-                      <Link
-                        href={`/pay/${inv.invoice_id}`}
-                        className="text-xs"
-                      >
+                      <Link href={`/pay/${inv.invoice_id}`} className="text-xs">
                         Open
                       </Link>
                       {inv.status === 'AWAITING_PAYMENT' && (
                         <button
                           type="button"
                           className="text-xs text-[var(--accent)]"
-                          onClick={() => checkChain(inv.invoice_id)}
+                          onClick={() => checkChain(inv)}
                           disabled={checking === inv.invoice_id}
-                          title="Query Electrum for a matching UTXO"
                         >
-                          {checking === inv.invoice_id
-                            ? 'Checking…'
-                            : 'Check chain'}
+                          {checking === inv.invoice_id ? 'Checking…' : 'Check chain'}
                         </button>
                       )}
                     </td>
@@ -203,13 +164,6 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
-
-      <p className="mt-6 text-xs text-[var(--text-muted)]">
-        Payment detection uses Electrum listunspent against your merchant
-        cashaddr and the exact quoted sats (including attribution tag). There
-        is no demo mark-paid path.
-      </p>
     </div>
   );
 }
-
