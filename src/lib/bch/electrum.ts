@@ -1,14 +1,21 @@
 /**
- * Electrum protocol client (TLS) for payment detection.
- * Uses public server — Settlr never holds keys.
+ * UTXO lookup for payment detection.
+ * Tries Electrum TLS, then Haskoin REST (works from serverless hosts that block port 50002).
  */
 
 import tls from 'tls';
 import { createHash } from 'crypto';
-import { decodeCashaddr } from './cashaddr';
+import { decodeCashaddr, normalizeCashaddr } from './cashaddr';
 
 const ELECTRUM_HOST = process.env.ELECTRUM_HOST || 'electrum.imaginary.cash';
 const ELECTRUM_PORT = Number(process.env.ELECTRUM_PORT || 50002);
+
+export interface Utxo {
+  tx_hash: string;
+  tx_pos: number;
+  value: number;
+  height: number;
+}
 
 function scriptHashForP2pkh(hash160hex: string): string {
   const hash = Buffer.from(hash160hex, 'hex');
@@ -20,10 +27,15 @@ function scriptHashForP2pkh(hash160hex: string): string {
   return createHash('sha256').update(script).digest().reverse().toString('hex');
 }
 
-type ElectrumCall = { id: number; method: string; params: unknown[] };
-
-function electrum(calls: ElectrumCall[]): Promise<unknown[]> {
-  return new Promise((resolve, reject) => {
+async function electrumList(address: string): Promise<Utxo[]> {
+  const { hash160 } = decodeCashaddr(address);
+  const sh = scriptHashForP2pkh(hash160);
+  const payload = JSON.stringify({
+    id: 1,
+    method: 'blockchain.scripthash.listunspent',
+    params: [sh],
+  });
+  const raw = await new Promise<string>((resolve, reject) => {
     const socket = tls.connect({
       host: ELECTRUM_HOST,
       port: ELECTRUM_PORT,
@@ -31,78 +43,95 @@ function electrum(calls: ElectrumCall[]): Promise<unknown[]> {
       rejectUnauthorized: true,
     });
     let buf = '';
-    const results = new Map<number, unknown>();
     const timer = setTimeout(() => {
       socket.destroy();
       reject(new Error('Electrum timeout'));
-    }, 12000);
+    }, 8000);
     socket.on('error', (e) => {
       clearTimeout(timer);
       reject(e);
     });
     socket.on('data', (chunk) => {
       buf += chunk.toString();
-      let idx: number;
-      while ((idx = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, idx);
-        buf = buf.slice(idx + 1);
-        if (!line.trim()) continue;
-        try {
-          const msg = JSON.parse(line);
-          if (msg.id != null) results.set(msg.id, msg.result ?? msg.error);
-        } catch {
-          /* ignore partial */
-        }
-        if (results.size >= calls.length) {
-          clearTimeout(timer);
-          socket.end();
-          resolve(calls.map((c) => results.get(c.id)));
-        }
+      if (buf.includes('\n')) {
+        clearTimeout(timer);
+        socket.end();
+        resolve(buf);
       }
     });
-    socket.on('connect', () => {
-      for (const c of calls) {
-        socket.write(JSON.stringify(c) + '\n');
-      }
+    socket.on('secureConnect', () => {
+      socket.write(payload + '\n');
     });
   });
+  const msg = JSON.parse(raw.split('\n')[0]);
+  if (!Array.isArray(msg.result)) return [];
+  return msg.result as Utxo[];
 }
 
-export interface Utxo {
-  tx_hash: string;
-  tx_pos: number;
-  value: number;
-  height: number;
+async function haskoinList(address: string): Promise<Utxo[]> {
+  const addr = normalizeCashaddr(address);
+  const url = `https://api.haskoin.com/bch/address/${addr}/unspent`;
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Haskoin ${res.status}`);
+  const json = (await res.json()) as Array<{
+    txid?: string;
+    tx_hash?: string;
+    index?: number;
+    vout?: number;
+    value?: number;
+    block?: { height?: number };
+    height?: number;
+  }>;
+  if (!Array.isArray(json)) return [];
+  return json.map((u) => ({
+    tx_hash: u.txid || u.tx_hash || '',
+    tx_pos: u.index ?? u.vout ?? 0,
+    value: Number(u.value || 0),
+    height: u.block?.height ?? u.height ?? 0,
+  }));
 }
 
-/** List unspent outputs for a P2PKH cashaddr via Electrum. */
-export async function listUnspent(address: string): Promise<Utxo[]> {
-  const { hash160 } = decodeCashaddr(address);
-  const sh = scriptHashForP2pkh(hash160);
-  const [res] = await electrum([
-    { id: 1, method: 'blockchain.scripthash.listunspent', params: [sh] },
-  ]);
-  if (!Array.isArray(res)) return [];
-  return res as Utxo[];
+export async function listUnspent(address: string): Promise<{
+  utxos: Utxo[];
+  source: string;
+}> {
+  const errors: string[] = [];
+  try {
+    const utxos = await electrumList(address);
+    return { utxos, source: `electrum:${ELECTRUM_HOST}` };
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : 'electrum');
+  }
+  try {
+    const utxos = await haskoinList(address);
+    return { utxos, source: 'haskoin' };
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : 'haskoin');
+  }
+  throw new Error(`Could not read UTXOs (${errors.join('; ')})`);
 }
 
-/**
- * Look for a UTXO matching expected sats (exact, for satoshi-tag attribution).
- * Returns the matching UTXO or null.
- */
-export async function findPayment(
-  address: string,
+/** Prefer exact satoshi tag, then a close payment on a shared merchant address. */
+export function matchPayment(
+  utxos: Utxo[],
   expectedSats: number
-): Promise<Utxo | null> {
-  const utxos = await listUnspent(address);
-  // Exact match preferred (satoshi tag)
+): Utxo | null {
   const exact = utxos.find((u) => u.value === expectedSats);
   if (exact) return exact;
-  // Allow small under/over without tag collision (legacy tolerance)
-  const close = utxos.find(
-    (u) =>
-      u.value >= Math.floor(expectedSats * 0.99) &&
-      u.value <= Math.ceil(expectedSats * 1.05)
-  );
-  return close ?? null;
+  const near = utxos
+    .filter(
+      (u) =>
+        u.value >= expectedSats - 20 &&
+        u.value <= expectedSats + 50
+    )
+    .sort((a, b) => Math.abs(a.value - expectedSats) - Math.abs(b.value - expectedSats));
+  if (near[0]) return near[0];
+  const band = utxos
+    .filter(
+      (u) =>
+        u.value >= Math.floor(expectedSats * 0.98) &&
+        u.value <= Math.ceil(expectedSats * 1.03)
+    )
+    .sort((a, b) => Math.abs(a.value - expectedSats) - Math.abs(b.value - expectedSats));
+  return band[0] ?? null;
 }
